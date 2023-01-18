@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection.Emit;
 using Unity.VisualScripting;
 using UnityEngine;
 using UnityEngine.TextCore.LowLevel;
@@ -11,13 +12,17 @@ public class MineSweeper : MonoBehaviour
 {
     public GameObject TilePrefab;
     public GameObject TilePanel;
+    public Text GameOverLabel, BombLabel, TimeLabel;
     public Sprite TileCovered, TileDiscovered, Bomb, Flag;
     public Sprite[] AdjacentBombCountMap;
 
     const int totalBombs = 99;
     const int width = 32, height = 16;
 
+    bool gameOver = false;
     bool firstClick = true;
+    int flagged = 0;
+    float startTime = 0;
     Tile[][] tiles;
 
     public class Tile
@@ -33,13 +38,19 @@ public class MineSweeper : MonoBehaviour
 
     public void OnTileClicked(GameObject tileVisual)
     {
+        if (gameOver)
+            return;
+
         Tile tile = FindTileFromVisual(tileVisual);
+        if (tile.IsFlagged)
+            return;
 
         if (firstClick)
         {
             PlaceBombsRandomly(new(tile.XPos, tile.YPos));
             UpdateAdjacentBombCounts();
             firstClick = false;
+            startTime = Time.time;
         }
 
 
@@ -48,8 +59,21 @@ public class MineSweeper : MonoBehaviour
 
         tile.IsDiscovered = true;
         CascadeDiscover(tile, null);
-        //if (tile.IsBomb)
-        //    Restart();
+
+        if (tile.IsBomb)
+        {
+            gameOver = true;
+            GameOverLabel.color = new(1, 0, 0, .5f);
+
+            for (int x = 0; x < width; x++)
+            {
+                for (int y = 0; y < height; y++)
+                {
+                    tiles[x][y].IsDiscovered = true;
+                }
+            }
+            UpdateAllTileVisuals();
+        }
 
         UpdateTileVisual(tile);
 
@@ -57,21 +81,64 @@ public class MineSweeper : MonoBehaviour
 
     public void OnTileFlagged(GameObject tileVisual)
     {
+        if (gameOver)
+            return;
+
         Tile tile = FindTileFromVisual(tileVisual);
-        tile.IsFlagged = !tile.IsFlagged;
+
+        if (tile.IsDiscovered)
+            return;
+
+        if (tile.IsFlagged)
+        {
+            tile.IsFlagged = false;
+            flagged--;
+        }
+        else
+        {
+            tile.IsFlagged = true;
+            flagged++;
+        }
+
         UpdateTileVisual(tile);
+    }
+
+    private void Update()
+    {
+        if (Input.GetKeyDown(KeyCode.R))
+        {
+            Restart();
+        }
+
+        if (!firstClick && !gameOver)
+        {
+            var gameDuration = Time.time - startTime;
+            int minutes = (int)gameDuration / 60;
+            int seconds = (int)gameDuration % 60;
+            if (seconds < 10)
+                TimeLabel.text = $"{minutes}:0{seconds}";
+            else
+                TimeLabel.text = $"{minutes}:{seconds}";
+
+            BombLabel.text = $"{totalBombs - flagged}";
+        }
     }
 
     void Start()
     {
         Restart();
     }
-    private void Restart()
+    public void Restart()
     {
+        GameOverLabel.color = new(0, 0, 0, 0);
+        gameOver = false;
+        firstClick = true;
+        flagged = 0;
+        TimeLabel.GetComponent<Text>().text = $"00:00";
         InitialiseTileArray();
-        InitialiseTileVisual();
+        DeleteAllTileVisuals();
+        InitialiseTileVisuals();
     }
-
     private void InitialiseTileArray()
     {
         tiles = new Tile[width][];
@@ -161,7 +228,7 @@ public class MineSweeper : MonoBehaviour
             }
         }
     }
-    private void InitialiseTileVisual()
+    private void InitialiseTileVisuals()
     {
         for (int y = 0; y < height; y++)
         {
@@ -180,6 +247,7 @@ public class MineSweeper : MonoBehaviour
 
         if (tile.IsDiscovered)
         {
+            
             image.sprite = TileDiscovered;
             if (tile.IsBomb)
             {
@@ -190,6 +258,11 @@ public class MineSweeper : MonoBehaviour
             {
                 childImage.sprite = AdjacentBombCountMap[tile.AdjacentBombCount];
                 childImage.color = Color.white;
+            }
+            else
+            {
+                childImage.sprite = null;
+                childImage.color = new(0, 0, 0, 0);
             }
 
         }
@@ -216,6 +289,12 @@ public class MineSweeper : MonoBehaviour
             for (int y = 0; y < height; y++)
                 UpdateTileVisual(tiles[x][y]);
     }
+    
+    private void CascadeDiscover(Tile tile)
+    {
+        CascadeDiscover(tile, new HashSet<Tile>());
+    }
+
     private void CascadeDiscover(Tile tile, HashSet<Tile> checkedTiles)
     {
         if (checkedTiles == null)
@@ -227,6 +306,12 @@ public class MineSweeper : MonoBehaviour
         checkedTiles.Add(tile);
 
         tile.IsDiscovered = true;
+        if (tile.IsFlagged)
+        {
+            tile.IsFlagged = false;
+            flagged--;
+        }
+
         UpdateTileVisual(tile);
 
         if (tile.AdjacentBombCount > 0)
@@ -238,7 +323,13 @@ public class MineSweeper : MonoBehaviour
         }
 
     }
-
+    private void DeleteAllTileVisuals()
+    {
+        for (int i = TilePanel.transform.childCount - 1; i >= 0; i--)
+        {
+            Destroy(TilePanel.transform.GetChild(i).gameObject);
+        }
+    }
     IEnumerable<Tile> AdjacentTiles(Tile tile)
     {
         for (int x = -1; x < 2; x++)
@@ -257,7 +348,6 @@ public class MineSweeper : MonoBehaviour
             }
         }
     }
-
     private Tile FindTileFromVisual(GameObject tileVisual)
     {
         Tile tile = null;
